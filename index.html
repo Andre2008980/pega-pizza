@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>Pega Pizza</title>
+<style>
+  /* Tira margens e deixa o fundo escuro */
+  body { margin: 0; background: #0b1030; display: flex; justify-content: center; touch-action: none; }
+  /* O canvas é a "tela" do jogo; ajusta ao tamanho da janela */
+  canvas { background: #141a45; max-width: 100vw; max-height: 100vh; }
+</style>
+</head>
+<body>
+<canvas id="tela" width="360" height="640"></canvas>
+
+<script>
+// ---------- Preparação ----------
+const tela = document.getElementById('tela');
+const c = tela.getContext('2d');     // "c" é o pincel que desenha na tela
+const L = tela.width, A = tela.height;
+
+let moto, pizzas, pessoas, pontos, vidas, fim, quadros, piscar, dir;
+const teclas = {};                   // guarda quais setas estão apertadas
+
+// Posições dos recheios dentro da pizza (relativas ao centro)
+const POS = [[0, -9], [9, -3], [6, 8], [-6, 8], [-10, -2], [0, 1]];
+
+// ---------- Fundo: rua à noite com pizzaria ----------
+// O fundo é desenhado UMA vez numa tela escondida e depois só é copiado
+// para a tela do jogo (assim o jogo fica leve no celular).
+const fundo = document.createElement('canvas');
+fundo.width = L; fundo.height = A;
+
+function criarFundo() {
+  const f = fundo.getContext('2d');
+
+  // Céu da noite (degradê de azul escuro) com estrelas e lua
+  const ceu = f.createLinearGradient(0, 0, 0, 400);
+  ceu.addColorStop(0, '#080c28'); ceu.addColorStop(1, '#1d2557');
+  f.fillStyle = ceu; f.fillRect(0, 0, L, 400);
+  f.fillStyle = '#fff';
+  for (let i = 0; i < 40; i++) f.fillRect((i * 97) % L, 60 + (i * 53) % 110, 2, 2);
+  f.fillStyle = '#fff6c0'; f.beginPath(); f.arc(300, 105, 20, 0, 7); f.fill();       // lua
+  f.fillStyle = '#12184a'; f.beginPath(); f.arc(309, 100, 18, 0, 7); f.fill();       // faz a lua virar "crescente"
+
+  // Prédios escuros ao fundo, com janelinhas acesas
+  [[0, 240, 70, 160], [290, 260, 70, 140]].forEach(([x, y, w, h]) => {
+    f.fillStyle = '#0f1438'; f.fillRect(x, y, w, h);
+    f.fillStyle = '#ffd77a';
+    for (let j = y + 14; j < y + h - 30; j += 26)
+      for (let i = x + 10; i < x + w - 10; i += 22) if ((i + j) % 3) f.fillRect(i, j, 8, 10);
+  });
+
+  // ----- Pizzaria -----
+  f.fillStyle = '#8d3b2e'; f.fillRect(70, 210, 220, 190);                            // parede
+  f.fillStyle = '#5d2218'; f.fillRect(62, 196, 236, 16);                             // telhadinho
+  f.fillStyle = '#2a1a14'; f.fillRect(100, 148, 160, 42);                            // placa
+  f.fillStyle = '#444'; f.fillRect(115, 190, 4, 8); f.fillRect(241, 190, 4, 8);      // suportes da placa
+  f.save();                                                                          // letreiro com brilho (neon)
+  f.shadowColor = '#ffeb3b'; f.shadowBlur = 12;
+  f.fillStyle = '#ffeb3b'; f.font = 'bold 26px sans-serif'; f.textAlign = 'center';
+  f.fillText('PIZZARIA', 180, 178);
+  f.restore();
+  for (let i = 0; i < 10; i++) {                                                     // toldo listrado
+    f.fillStyle = i % 2 ? '#ffffff' : '#2e7d32';
+    f.fillRect(70 + i * 22, 244, 22, 18);
+    f.beginPath(); f.arc(81 + i * 22, 262, 11, 0, Math.PI); f.fill();
+  }
+  [[84, 295], [226, 295]].forEach(([x, y]) => {                                      // janelas acesas
+    f.fillStyle = '#ffd180'; f.fillRect(x, y, 50, 60);
+    f.strokeStyle = '#4e2a1a'; f.lineWidth = 4; f.strokeRect(x, y, 50, 60);
+    f.beginPath(); f.moveTo(x + 25, y); f.lineTo(x + 25, y + 60); f.stroke();
+  });
+  f.fillStyle = '#4e2a1a'; f.fillRect(155, 300, 50, 100);                            // porta
+  f.fillStyle = '#ffcc80'; f.fillRect(163, 310, 34, 40);
+  f.fillStyle = '#ffd54f'; f.beginPath(); f.arc(197, 365, 3, 0, 7); f.fill();        // maçaneta
+
+  // ----- Calçada, meio-fio e asfalto -----
+  f.fillStyle = '#7d7f8c'; f.fillRect(0, 400, L, 70);                                // calçada
+  f.fillStyle = '#a6a8b5'; f.fillRect(0, 400, L, 4);
+  f.strokeStyle = 'rgba(0,0,0,0.2)'; f.lineWidth = 1;
+  for (let x = 0; x < L; x += 45) { f.beginPath(); f.moveTo(x, 404); f.lineTo(x, 470); f.stroke(); }
+  f.beginPath(); f.moveTo(0, 436); f.lineTo(L, 436); f.stroke();
+  f.fillStyle = '#b9bbc6'; f.fillRect(0, 470, L, 8);                                 // meio-fio
+  f.fillStyle = '#26262e'; f.fillRect(0, 478, L, A - 478);                           // asfalto
+  for (let i = 0; i < 140; i++) {                                                    // pontinhos do asfalto
+    f.fillStyle = i % 2 ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.25)';
+    f.fillRect((i * 83) % L, 480 + (i * 47) % 158, 2, 2);
+  }
+  f.fillStyle = '#e0e0e0';                                                           // faixa tracejada
+  for (let x = 10; x < L; x += 70) f.fillRect(x, 624, 40, 5);
+
+  // ----- Postes de luz com brilho -----
+  [30, 330].forEach(x => {
+    f.fillStyle = '#2f2f3a'; f.fillRect(x - 2, 300, 5, 170);
+    const luz = f.createRadialGradient(x, 300, 2, x, 300, 80);
+    luz.addColorStop(0, 'rgba(255,232,150,0.55)'); luz.addColorStop(1, 'rgba(255,232,150,0)');
+    f.fillStyle = luz; f.fillRect(x - 80, 220, 160, 160);
+    f.fillStyle = '#fff3b0'; f.beginPath(); f.arc(x, 300, 6, 0, 7); f.fill();
+  });
+}
+
+// ---------- Começar / Recomeçar ----------
+function iniciar() {
+  moto = { x: L / 2 - 45, y: A - 110, w: 90 };
+  pizzas = [];                       // lista de pizzas caindo
+  // Pessoas andando na calçada: posição, direção, velocidade e cores
+  pessoas = [
+    { x: 60,  y: 452, d: 1,  v: 0.6, cor: '#e91e63', cabelo: '#3e2723', fase: 0 },
+    { x: 150, y: 444, d: -1, v: 0.8, cor: '#26a69a', cabelo: '#111',    fase: 2 },
+    { x: 240, y: 456, d: 1,  v: 0.5, cor: '#ff9800', cabelo: '#f9a825', fase: 4 },
+    { x: 310, y: 448, d: -1, v: 0.7, cor: '#7e57c2', cabelo: '#4e342e', fase: 1 }
+  ];
+  pontos = 0; vidas = 3; fim = false; quadros = 0; piscar = 0; dir = 1;
+}
+
+// ---------- Controles ----------
+addEventListener('keydown', e => teclas[e.key] = true);
+addEventListener('keyup',   e => teclas[e.key] = false);
+
+// Toque no celular: arrastar o dedo move a moto
+function mover(e) {
+  const r = tela.getBoundingClientRect();
+  const px = (e.touches[0].clientX - r.left) * (L / r.width);
+  const novoX = px - moto.w / 2;
+  if (novoX > moto.x + 1) dir = 1; else if (novoX < moto.x - 1) dir = -1;  // vira a moto para o lado certo
+  moto.x = novoX;
+  e.preventDefault();
+}
+tela.addEventListener('touchstart', mover);
+tela.addEventListener('touchmove', mover);
+
+// Clique no botão Recomeçar (só vale quando o jogo acabou)
+tela.addEventListener('click', e => {
+  if (!fim) return;
+  const r = tela.getBoundingClientRect();
+  const x = (e.clientX - r.left) * (L / r.width);
+  const y = (e.clientY - r.top) * (A / r.height);
+  if (x > 110 && x < 250 && y > 330 && y < 380) iniciar();
+});
+
+// ---------- Atualiza o jogo (roda ~60 vezes por segundo) ----------
+function atualizar() {
+  if (fim) return;
+  quadros++;
+  if (piscar > 0) piscar--;
+
+  // Velocidade de queda: começa em 2.5 e sobe com o tempo (máximo 9)
+  const velocidade = Math.min(9, 2.5 + (quadros / 60) * 0.06);
+
+  // Move a moto com as setas
+  if (teclas['ArrowLeft'])  { moto.x -= 6; dir = -1; }
+  if (teclas['ArrowRight']) { moto.x += 6; dir = 1; }
+  moto.x = Math.max(0, Math.min(L - moto.w, moto.x));      // não sai da tela
+
+  // Pessoas andam pela calçada e reaparecem do outro lado
+  pessoas.forEach(p => {
+    p.x += p.d * p.v;
+    if (p.x > L + 15) p.x = -15;
+    if (p.x < -15) p.x = L + 15;
+  });
+
+  // Cria uma pizza nova de tempos em tempos (1 a cada 4 é queimada)
+  if (quadros % 50 === 0) {
+    pizzas.push({
+      x: 22 + Math.random() * (L - 44), y: -30, r: 18, giro: 0,
+      queimada: Math.random() < 0.25,
+      tipo: Math.floor(Math.random() * 3)       // 0 calabresa, 1 margherita, 2 queijo
+    });
+  }
+
+  // Move cada pizza para baixo e vê o que aconteceu com ela
+  for (let i = pizzas.length - 1; i >= 0; i--) {
+    const p = pizzas[i];
+    p.y += velocidade;
+    p.giro += 0.03;                              // a pizza gira enquanto cai
+
+    // Encostou na bag ou no entregador (parte de cima da moto)?
+    const pegou = p.x > moto.x - 5 && p.x < moto.x + moto.w + 5 &&
+                  p.y + p.r > moto.y && p.y - p.r < moto.y + 45;
+    if (pegou) {
+      if (p.queimada) { vidas--; piscar = 15; }  // pizza queimada: perde 1 vida
+      else pontos++;                             // pizza boa: +1 ponto
+      pizzas.splice(i, 1);
+    }
+    // Passou da tela?
+    else if (p.y > A) {
+      if (!p.queimada) vidas--;                  // pizza boa no chão: perde 1 vida
+      pizzas.splice(i, 1);                       // queimada no chão: sem problema
+    }
+    if (vidas <= 0) fim = true;
+  }
+}
+
+// ---------- Desenhos ----------
+// Pizza boa ou queimada (desenhada girando em volta do próprio centro)
+function desenharPizza(p) {
+  const r = p.r;
+  c.save(); c.translate(p.x, p.y); c.rotate(p.giro);
+
+  if (p.queimada) {
+    c.fillStyle = '#2b1a0e'; c.beginPath(); c.arc(0, 0, r, 0, 7); c.fill();          // borda queimada
+    c.fillStyle = '#4a3322'; c.beginPath(); c.arc(0, 0, r - 3, 0, 7); c.fill();      // massa escura
+    c.fillStyle = '#0d0d0d';                                                          // manchas pretas
+    [[6, 4, 5], [-7, 6, 4], [-2, -8, 4]].forEach(([x, y, k]) => { c.beginPath(); c.arc(x, y, k, 0, 7); c.fill(); });
+    c.strokeStyle = '#ffccbc'; c.lineWidth = 3;                                       // X de "perigo"
+    c.beginPath(); c.moveTo(-7, -7); c.lineTo(7, 7); c.moveTo(7, -7); c.lineTo(-7, 7); c.stroke();
+  } else {
+    c.fillStyle = '#c98a3b'; c.beginPath(); c.arc(0, 0, r, 0, 7); c.fill();          // borda
+    c.fillStyle = '#f6c445'; c.beginPath(); c.arc(0, 0, r - 3, 0, 7); c.fill();      // queijo
+    POS.forEach(([x, y], i) => {
+      if (p.tipo === 0) {                                                             // calabresa
+        c.fillStyle = '#d32f2f'; c.beginPath(); c.arc(x, y, 4, 0, 7); c.fill();
+      } else if (p.tipo === 1) {                                                      // margherita
+        c.fillStyle = i % 2 ? '#2e7d32' : '#fffde7';
+        c.beginPath(); c.arc(x, y, i % 2 ? 3 : 4, 0, 7); c.fill();
+      } else {                                                                        // queijo com azeitona
+        c.fillStyle = i % 2 ? '#222' : '#ffe9a0';
+        c.beginPath(); c.arc(x, y, 3, 0, 7); c.fill();
+      }
+    });
+    c.strokeStyle = 'rgba(120,60,10,0.5)'; c.lineWidth = 1;                           // cortes das fatias
+    for (let k = 0; k < 4; k++) {
+      c.save(); c.rotate(k * Math.PI / 4);
+      c.beginPath(); c.moveTo(-r + 2, 0); c.lineTo(r - 2, 0); c.stroke();
+      c.restore();
+    }
+  }
+  c.strokeStyle = '#5a2d0c'; c.lineWidth = 2;                                         // contorno
+  c.beginPath(); c.arc(0, 0, r, 0, 7); c.stroke();
+  c.restore();
+
+  // Fumaça saindo da pizza queimada
+  if (p.queimada) {
+    c.strokeStyle = 'rgba(210,210,210,0.75)'; c.lineWidth = 3;
+    const ondas = Math.sin(quadros / 8) * 3;
+    [-5, 6].forEach(dx => {
+      c.beginPath(); c.moveTo(p.x + dx, p.y - r - 2);
+      c.quadraticCurveTo(p.x + dx + ondas, p.y - r - 10, p.x + dx, p.y - r - 18); c.stroke();
+    });
+  }
+}
+
+// Pessoa andando na calçada (pernas balançam)
+function desenharPessoa(p) {
+  const b = Math.sin(quadros * 0.25 + p.fase) * 6;          // balanço das pernas
+  c.strokeStyle = '#1b1b2a'; c.lineWidth = 3;
+  c.beginPath();
+  c.moveTo(p.x, p.y - 14); c.lineTo(p.x + b, p.y);
+  c.moveTo(p.x, p.y - 14); c.lineTo(p.x - b, p.y);
+  c.stroke();
+  c.fillStyle = p.cor; c.fillRect(p.x - 6, p.y - 36, 12, 24);            // corpo
+  c.fillStyle = '#f5c9a0'; c.beginPath(); c.arc(p.x, p.y - 42, 6, 0, 7); c.fill();  // cabeça
+  c.fillStyle = p.cabelo; c.beginPath(); c.arc(p.x, p.y - 43, 6, Math.PI, 0); c.fill(); // cabelo
+}
+
+// Entregador de moto, com bag nas costas (dir = 1 olha para a direita, -1 para a esquerda)
+function desenharMoto() {
+  const y = moto.y;
+  c.save(); c.translate(moto.x + moto.w / 2, y); c.scale(dir, 1);
+
+  // Luz do farol (feixe amarelinho na frente)
+  c.fillStyle = 'rgba(255,245,157,0.18)';
+  c.beginPath(); c.moveTo(30, 36); c.lineTo(115, 18); c.lineTo(115, 54); c.fill();
+
+  // Rodas
+  [-26, 26].forEach(x => {
+    c.fillStyle = '#111'; c.beginPath(); c.arc(x, 58, 12, 0, 7); c.fill();
+    c.fillStyle = '#9e9e9e'; c.beginPath(); c.arc(x, 58, 5, 0, 7); c.fill();
+  });
+  // Corpo da moto, garfo, guidão, banco, farol e lanterna
+  c.fillStyle = '#546e7a'; c.fillRect(-22, 38, 44, 14);
+  c.strokeStyle = '#222'; c.lineWidth = 3;
+  c.beginPath(); c.moveTo(22, 38); c.lineTo(26, 58); c.moveTo(20, 30); c.lineTo(28, 28); c.stroke();
+  c.fillStyle = '#212121'; c.fillRect(-24, 34, 26, 6);
+  c.fillStyle = '#fff59d'; c.beginPath(); c.arc(30, 36, 4, 0, 7); c.fill();
+  c.fillStyle = '#ff1744'; c.beginPath(); c.arc(-34, 40, 3, 0, 7); c.fill();
+
+  // Entregador: perna, corpo, braço, cabeça e capacete
+  c.fillStyle = '#1a237e'; c.fillRect(-6, 38, 10, 16);
+  c.fillStyle = '#1e88e5'; c.fillRect(-8, 12, 16, 28);
+  c.strokeStyle = '#1e88e5'; c.lineWidth = 5;
+  c.beginPath(); c.moveTo(4, 18); c.lineTo(22, 30); c.stroke();
+  c.fillStyle = '#f5c9a0'; c.beginPath(); c.arc(2, 6, 7.5, 0, 7); c.fill();
+  c.fillStyle = '#f5f5f5'; c.beginPath(); c.arc(2, 6, 9, Math.PI, 0); c.fill();
+  c.fillStyle = '#263238'; c.fillRect(7, 3, 6, 4);
+
+  // Bag de entregador (nas costas) com logotipo de pizza
+  c.fillStyle = '#c62828'; c.fillRect(-40, 6, 30, 30);
+  c.fillStyle = '#e53935'; c.fillRect(-40, 6, 30, 8);
+  c.fillStyle = '#ffd54f'; c.beginPath(); c.arc(-25, 25, 7, 0, 7); c.fill();
+  c.fillStyle = '#c62828';
+  c.beginPath(); c.arc(-27, 23, 1.5, 0, 7); c.arc(-23, 27, 1.5, 0, 7); c.fill();
+
+  c.restore();
+}
+
+function desenhar() {
+  c.drawImage(fundo, 0, 0);                    // copia o fundo pronto para a tela
+
+  pessoas.forEach(desenharPessoa);
+  pizzas.forEach(desenharPizza);
+  desenharMoto();
+
+  // Piscada vermelha quando pega pizza queimada
+  if (piscar > 0) { c.fillStyle = 'rgba(229,57,53,0.35)'; c.fillRect(0, 0, L, A); }
+
+  // Placar: pontos e vidas (texto branco por causa do céu escuro)
+  c.fillStyle = '#fff'; c.font = 'bold 22px sans-serif'; c.textAlign = 'left';
+  c.fillText('Pontos: ' + pontos, 12, 34);
+  c.textAlign = 'right';
+  c.fillText('Vidas: ' + vidas, L - 12, 34);
+
+  // Tela de fim de jogo com botão
+  if (fim) {
+    c.fillStyle = 'rgba(0,0,0,0.7)'; c.fillRect(0, 0, L, A);
+    c.fillStyle = '#fff'; c.textAlign = 'center';
+    c.font = 'bold 36px sans-serif'; c.fillText('Fim de jogo', L / 2, 260);
+    c.font = '24px sans-serif'; c.fillText('Pontos: ' + pontos, L / 2, 305);
+    c.fillStyle = '#f2b705'; c.fillRect(110, 330, 140, 50);                    // botão
+    c.fillStyle = '#000'; c.font = 'bold 20px sans-serif';
+    c.fillText('Recomeçar', L / 2, 362);
+  }
+}
+
+// ---------- Laço principal: atualiza e desenha sem parar ----------
+function laco() { atualizar(); desenhar(); requestAnimationFrame(laco); }
+criarFundo();
+iniciar();
+laco();
+</script>
+</body>
+</html>
